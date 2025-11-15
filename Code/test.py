@@ -10,7 +10,10 @@ import os
 
 # Load model
 try:
-    model = load_model("mnist_cnn_model.h5")
+    # Get the directory of this script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    model_path = os.path.join(script_dir, "mnist_cnn_model.h5")
+    model = load_model(model_path)
     print("Model loaded successfully.\n")
 except IOError:
     print("Error: Cannot find mnist_cnn_model.h5")
@@ -89,12 +92,12 @@ def recognize_from_file():
         return
     
     # Preprocessing
-    blurred = cv2.GaussianBlur(image, (3, 3), 0)
+    blurred = cv2.GaussianBlur(image, (5, 5), 0)
     _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     
-    # Morphological operations
-    kernel = np.ones((2, 2), np.uint8)
-    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=1)
+    # Morphological operations to clean noise
+    kernel = np.ones((3, 3), np.uint8)
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
     
     # Find and filter contours
@@ -103,18 +106,49 @@ def recognize_from_file():
     digit_bboxes = []
     image_height, image_width = image.shape
     
+    # Calculate median height of all contours for adaptive filtering
+    all_heights = [cv2.boundingRect(cnt)[3] for cnt in contours]
+    median_height = np.median(all_heights) if all_heights else 0
+    
     for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)
         aspect_ratio = h / float(w) if w > 0 else 0
         area = cv2.contourArea(cnt)
         
-        if (h > image_height * 0.25 and 
-            0.8 < aspect_ratio < 3.5 and 
-            area > 50 and
-            5 < w < image_width * 0.5):
+        # More flexible filtering to catch thin digits like "1"
+        if (h > max(10, median_height * 0.2) and  # Lower minimum height
+            0.2 < aspect_ratio < 8.0 and  # Much wider range for thin digits
+            area > 50 and  # Lower minimum area
+            w > 3 and  # Lower minimum width for "1"
+            h < image_height * 0.9 and  # Not too tall
+            w < image_width * 0.6):  # Not too wide
             digit_bboxes.append((x, y, w, h))
     
-    digit_bboxes.sort(key=lambda b: b[0])
+    # Sort by row then column (top-to-bottom, left-to-right)
+    def sort_boxes_by_row(boxes):
+        if not boxes:
+            return boxes
+        
+        # Group boxes by rows
+        boxes_sorted = sorted(boxes, key=lambda b: b[1])  # Sort by y first
+        rows = []
+        current_row = [boxes_sorted[0]]
+        
+        for box in boxes_sorted[1:]:
+            # If y-coordinate is close to current row, add to same row
+            if abs(box[1] - current_row[0][1]) < median_height * 0.5:
+                current_row.append(box)
+            else:
+                # Start new row
+                rows.append(sorted(current_row, key=lambda b: b[0]))  # Sort by x
+                current_row = [box]
+        
+        rows.append(sorted(current_row, key=lambda b: b[0]))  # Add last row
+        
+        # Flatten rows
+        return [box for row in rows for box in row]
+    
+    digit_bboxes = sort_boxes_by_row(digit_bboxes)
     print(f"Detected {len(digit_bboxes)} digits.\n")
     
     # Recognition
