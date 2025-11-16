@@ -36,17 +36,18 @@ class ImageProcessor:
         """Initialize ImageProcessor with empty preprocessing steps dictionary."""
         self.preprocessing_steps: Dict[str, np.ndarray] = {}
     
-    def process_image(self, image_path: str) -> Tuple[Dict[str, np.ndarray], List[np.ndarray]]:
+    def process_image(self, image_path: str, mode: str = 'digits') -> Tuple[Dict[str, np.ndarray], List[np.ndarray]]:
         """
-        Process image through all preprocessing steps for digit recognition.
+        Process image through all preprocessing steps for digit or shape recognition.
         
         Args:
             image_path: Path to the input image file
+            mode: Recognition mode - 'digits' or 'shapes'
             
         Returns:
             Tuple containing:
                 - Dictionary of preprocessing steps for visualization
-                - List of preprocessed digit images (28x28)
+                - List of preprocessed images (28x28 for digits, 64x64 for shapes)
                 
         Raises:
             ValueError: If image cannot be loaded
@@ -71,16 +72,19 @@ class ImageProcessor:
         morph = self._apply_morphology(thresh)
         self.preprocessing_steps['5_morphology'] = morph
         
-        # Step 5: Detect and filter digit contours
-        valid_contours, median_height = self._detect_digits(morph, original, gray.shape)
+        # Step 5: Detect and filter contours (digits or shapes)
+        valid_contours, median_height = self._detect_objects(morph, original, gray.shape, mode)
         
-        # Step 6: Sort digits by reading order
+        # Step 6: Sort objects by reading order
         sorted_contours = self._sort_boxes_by_row(valid_contours, median_height)
         
-        # Step 7: Extract and preprocess individual digits
-        digit_images = self._extract_digits(morph, sorted_contours)
+        # Step 7: Extract and preprocess individual objects
+        if mode == 'shapes':
+            object_images = self._extract_shapes(morph, sorted_contours)
+        else:
+            object_images = self._extract_digits(morph, sorted_contours)
         
-        return self.preprocessing_steps, digit_images
+        return self.preprocessing_steps, object_images
     
     def _load_image(self, image_path: str) -> np.ndarray:
         """Load image from file path."""
@@ -106,10 +110,10 @@ class ImageProcessor:
                                  iterations=self.MORPH_OPEN_ITERATIONS)
         return morph
     
-    def _detect_digits(self, morph: np.ndarray, original: np.ndarray, 
-                       image_shape: Tuple[int, int]) -> Tuple[List[Tuple[int, int, int, int]], float]:
+    def _detect_objects(self, morph: np.ndarray, original: np.ndarray, 
+                       image_shape: Tuple[int, int], mode: str = 'digits') -> Tuple[List[Tuple[int, int, int, int]], float]:
         """
-        Detect and filter valid digit contours.
+        Detect and filter valid digit or shape contours.
         
         Returns:
             Tuple of (valid_contours, median_height)
@@ -126,8 +130,16 @@ class ImageProcessor:
         
         for contour in contours:
             bbox = cv2.boundingRect(contour)
-            if self._is_valid_digit_contour(bbox, contour, median_height, 
-                                           image_height, image_width):
+            
+            # Use appropriate filter based on mode
+            if mode == 'shapes':
+                is_valid = self._is_valid_shape_contour(bbox, contour, median_height, 
+                                                        image_height, image_width)
+            else:
+                is_valid = self._is_valid_digit_contour(bbox, contour, median_height, 
+                                                        image_height, image_width)
+            
+            if is_valid:
                 x, y, w, h = bbox
                 cv2.rectangle(contour_img, (x, y), (x+w, y+h), (0, 255, 0), 2)
                 valid_contours.append(bbox)
@@ -158,6 +170,28 @@ class ImageProcessor:
                 h < image_height * self.MAX_HEIGHT_RATIO and
                 w < image_width * self.MAX_WIDTH_RATIO)
     
+    def _is_valid_shape_contour(self, bbox: Tuple[int, int, int, int], 
+                                contour: np.ndarray, median_height: float,
+                                image_height: int, image_width: int) -> bool:
+        """Check if contour is a valid shape (more relaxed aspect ratio for squares/circles)."""
+        x, y, w, h = bbox
+        
+        if w == 0 or h == 0:
+            return False
+        
+        aspect_ratio = h / float(w)
+        area = cv2.contourArea(contour)
+        
+        # Shapes are typically more square-like, so wider aspect ratio range
+        min_size = max(20, min(image_height, image_width) * 0.1)
+        
+        return (w > min_size and
+                h > min_size and
+                0.3 < aspect_ratio < 3.0 and  # Allow rectangles
+                area > 500 and  # Larger minimum area for shapes
+                w < image_width * 0.9 and
+                h < image_height * 0.9)
+    
     def _extract_digits(self, morph: np.ndarray, 
                        contours: List[Tuple[int, int, int, int]]) -> List[np.ndarray]:
         """Extract and preprocess individual digits from the image."""
@@ -180,6 +214,27 @@ class ImageProcessor:
                 self.preprocessing_steps[f'7_digit_{i}'] = digit_processed
         
         return digit_images
+    
+    def _extract_shapes(self, morph: np.ndarray, 
+                       contours: List[Tuple[int, int, int, int]]) -> List[np.ndarray]:
+        """Extract and preprocess individual shapes from the image."""
+        shape_images = []
+        
+        for i, (x, y, w, h) in enumerate(contours):
+            # Crop with padding
+            padding = 10
+            crop = morph[
+                max(0, y - padding):min(morph.shape[0], y + h + padding),
+                max(0, x - padding):min(morph.shape[1], x + w + padding)
+            ]
+            
+            # Resize to 64x64 for shape model
+            if crop.size > 0:
+                resized = cv2.resize(crop, (64, 64), interpolation=cv2.INTER_AREA)
+                shape_images.append(resized)
+                self.preprocessing_steps[f'7_shape_{i}'] = resized
+        
+        return shape_images
     
     def _sort_boxes_by_row(self, boxes: List[Tuple[int, int, int, int]], 
                           median_height: float) -> List[Tuple[int, int, int, int]]:

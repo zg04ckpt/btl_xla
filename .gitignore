@@ -25,5 +25,6 @@ Thumbs.db
 
 # Project specific
 debug_images/
+shapes_dataset/
 *.pkl
 *.pkl.result

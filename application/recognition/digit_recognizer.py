@@ -5,7 +5,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 class DigitRecognizer:
-    def __init__(self, model_path='Code/mnist_cnn_model.h5'):
+    def __init__(self, model_path='train/mnist_cnn_model.h5'):
         self.model_path = model_path
         self.model = None
         self.model_loaded = False
