@@ -14,6 +14,7 @@ class DrawingCanvas(QWidget):
         super().__init__()
         self.canvas_width = width
         self.canvas_height = height
+        # Khởi tạo image với kích thước lớn ban đầu (sẽ được resize trong resizeEvent)
         self.image = QImage(width, height, QImage.Format_RGB32)
         self.image.fill(Qt.white)
         
@@ -24,6 +25,9 @@ class DrawingCanvas(QWidget):
         # Set size policy để canvas có thể co giãn
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMinimumSize(400, 300)
+        
+        # Flag để đảm bảo image được resize khi widget hiển thị lần đầu
+        self.first_show = True
         
         self.setStyleSheet("""
             QWidget {
@@ -57,29 +61,38 @@ class DrawingCanvas(QWidget):
             self.drawing = False
     
     def resizeEvent(self, event):
-        """Xử lý khi resize cửa sổ - mở rộng canvas nếu cần"""
+        """Xử lý khi resize cửa sổ - resize image để khớp với widget size"""
         new_size = event.size()
-        if new_size.width() > self.image.width() or new_size.height() > self.image.height():
-            # Tạo image mới lớn hơn
-            new_image = QImage(max(new_size.width(), self.image.width()),
-                             max(new_size.height(), self.image.height()),
-                             QImage.Format_RGB32)
+        
+        # Luôn resize image để khớp với widget size
+        if new_size.width() != self.image.width() or new_size.height() != self.image.height():
+            # Tạo image mới với kích thước widget
+            new_image = QImage(new_size.width(), new_size.height(), QImage.Format_RGB32)
             new_image.fill(Qt.white)
             
-            # Copy nội dung cũ sang image mới
+            # Scale và copy nội dung cũ sang image mới
             painter = QPainter(new_image)
-            painter.drawImage(0, 0, self.image)
+            painter.drawImage(0, 0, self.image.scaled(new_size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             painter.end()
             
             self.image = new_image
         super().resizeEvent(event)
     
+    def showEvent(self, event):
+        """Xử lý khi widget được hiển thị lần đầu"""
+        if self.first_show:
+            self.first_show = False
+            # Resize image để khớp với kích thước thực tế của widget
+            if self.width() != self.image.width() or self.height() != self.image.height():
+                new_image = QImage(self.width(), self.height(), QImage.Format_RGB32)
+                new_image.fill(Qt.white)
+                self.image = new_image
+        super().showEvent(event)
+    
     def paintEvent(self, event):
         """Vẽ canvas"""
         painter = QPainter(self)
-        # Vẽ background trắng đầy đủ
-        painter.fillRect(self.rect(), Qt.white)
-        # Vẽ image
+        # Vẽ image toàn bộ widget (image đã được resize khớp với widget)
         painter.drawImage(0, 0, self.image)
     
     def clear_canvas(self):

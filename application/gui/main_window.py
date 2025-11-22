@@ -16,6 +16,7 @@ from application.recognition.letter_recognizer import LetterRecognizer
 from application.gui.preprocessing_viewer import PreprocessingViewer
 from application.gui.result_dialog import ResultDialog
 from application.gui.drawing_canvas import DrawingCanvas
+from application.gui.processing_worker import ProcessingWorker
 import tempfile
 
 class MainWindow(QMainWindow):
@@ -26,6 +27,7 @@ class MainWindow(QMainWindow):
         self.image_path = None
         self.temp_canvas_file = None
         self.recognition_mode = 'digits'  # Chế độ: 'digits', 'shapes', hoặc 'letters'
+        self.worker = None  # Worker thread cho xử lý ảnh
         self.init_ui()
         
         # Hiển thị cửa sổ trước khi khởi tạo model
@@ -344,7 +346,11 @@ class MainWindow(QMainWindow):
         self.preprocessing_viewer.clear_steps()
     
     def process_image(self):
-        """Xử lý ảnh và nhận dạng chữ số hoặc hình học"""
+        """Xử lý ảnh và nhận dạng chữ số hoặc hình học (async với QThread)"""
+        # Kiểm tra nếu đang xử lý thì không cho xử lý tiếp
+        if self.worker and self.worker.isRunning():
+            return
+        
         try:
             # Lưu canvas thành file tạm
             if self.temp_canvas_file:
@@ -363,114 +369,139 @@ class MainWindow(QMainWindow):
             self.result_text.setText(f"⏳ Đang xử lý {mode_text}...\n\nVui lòng chờ...")
             
             # Disable buttons
-            self.process_button.setEnabled(False)
-            self.upload_button.setEnabled(False)
-            self.clear_button.setEnabled(False)
-            self.digit_mode_radio.setEnabled(False)
-            self.letter_mode_radio.setEnabled(False)
-            self.shape_mode_radio.setEnabled(False)
+            self._set_buttons_enabled(False)
             
-            # Force update UI
-            self.repaint()
+            # Tạo worker thread để xử lý
+            processors = {
+                'letter': self.letter_processor,
+                'shape': self.shape_processor
+            }
+            recognizers = {
+                'digit': self.digit_recognizer,
+                'letter': self.letter_recognizer,
+                'shape': self.shape_recognizer
+            }
             
-            # Bước 1: Tiền xử lý ảnh theo chế độ (dùng processor phù hợp)
-            if self.recognition_mode == 'letters':
-                preprocessing_steps, object_images = self.letter_processor.process_image(self.image_path, 'letters')
-            elif self.recognition_mode == 'shapes':
-                preprocessing_steps, object_images = self.shape_processor.process_image(self.image_path, 'shapes')
-            else:  # digits - tạm thời dùng letter_processor với logic tương tự
-                # TODO: Tạo DigitProcessor riêng
-                preprocessing_steps, object_images = self.letter_processor.process_image(self.image_path, 'digits')
+            self.worker = ProcessingWorker(
+                self.image_path,
+                self.recognition_mode,
+                processors,
+                recognizers
+            )
+            
+            # Kết nối signals
+            self.worker.finished.connect(self.on_processing_finished)
+            self.worker.error.connect(self.on_processing_error)
+            self.worker.progress.connect(self.on_processing_progress)
+            
+            # Bắt đầu xử lý
+            self.worker.start()
+            
+        except Exception as e:
+            error_msg = f"Lỗi khi khởi tạo xử lý:\n{str(e)}"
+            self.result_text.setText(f"❌ {error_msg}")
+            QMessageBox.critical(self, "Lỗi", error_msg)
+            self._set_buttons_enabled(True)
+    
+    def _set_buttons_enabled(self, enabled: bool):
+        """Bật/tắt tất cả các buttons"""
+        self.process_button.setEnabled(enabled)
+        self.upload_button.setEnabled(enabled)
+        self.clear_button.setEnabled(enabled)
+        self.digit_mode_radio.setEnabled(enabled)
+        self.letter_mode_radio.setEnabled(enabled)
+        self.shape_mode_radio.setEnabled(enabled)
+    
+    def on_processing_progress(self, message: str):
+        """Cập nhật tiến trình xử lý"""
+        mode_texts = {'digits': 'chữ số', 'letters': 'chữ cái', 'shapes': 'hình học'}
+        mode_text = mode_texts.get(self.recognition_mode, 'đối tượng')
+        self.result_text.setText(f"⏳ {message}\n\nVui lòng chờ...")
+    
+    def on_processing_error(self, error_msg: str):
+        """Xử lý lỗi từ worker"""
+        self.result_text.setText(f"❌ {error_msg}")
+        QMessageBox.critical(self, "Lỗi", error_msg)
+        self._set_buttons_enabled(True)
+    
+    def on_processing_finished(self, result: dict):
+        """Xử lý kết quả từ worker"""
+        try:
+            preprocessing_steps = result['preprocessing_steps']
+            object_images = result['object_images']
+            results = result['results']
+            mode = result['mode']
             
             # Hiển thị các bước tiền xử lý
             self.preprocessing_viewer.display_preprocessing_steps(preprocessing_steps)
             
-            # Bước 2: Nhận dạng theo chế độ
-            if not object_images:
-                self.result_text.setText(f"❌ Không phát hiện {mode_text} nào!")
-                return
-            
-            if self.recognition_mode == 'digits':
-                # Nhận dạng chữ số
-                results = self.digit_recognizer.recognize_digits(object_images)
+            # Hiển thị kết quả theo chế độ
+            if mode == 'digits':
+                self._show_digit_results(object_images, results)
+            elif mode == 'letters':
+                self._show_letter_results(object_images, results)
+            else:  # shapes
+                self._show_shape_results(object_images, results)
                 
-                # Tạo chuỗi kết quả
-                digits_only = "".join([str(digit) for digit, _ in results])
-                
-                # Hiển thị trong text area
-                result_text = f"✓ Phát hiện {len(object_images)} chữ số\n\n"
-                result_text += f"Kết quả: {' '.join([str(d) for d, _ in results])}\n\n"
-                result_text += f"Chuỗi số: {digits_only}\n"
-                result_text += f"Độ tin cậy TB: {sum(c for _, c in results) / len(results) * 100:.1f}%"
-                self.result_text.setText(result_text)
-                
-                # Hiển thị popup kết quả (không block UI)
-                dialog_text = f"Số nhận dạng được:\n\n{digits_only}\n\n({len(object_images)} chữ số)"
-                dialog = ResultDialog(dialog_text, self)
-                dialog.show()
-            
-            elif self.recognition_mode == 'letters':
-                # Nhận dạng chữ cái
-                results = self.letter_recognizer.recognize_letters(object_images)
-                
-                # Tạo chuỗi kết quả
-                letters_only = "".join([letter for letter, _ in results])
-                
-                # Hiển thị trong text area
-                result_text = f"✓ Phát hiện {len(object_images)} chữ cái\n\n"
-                result_text += f"Kết quả: {' '.join([l for l, _ in results])}\n\n"
-                result_text += f"Chuỗi chữ: {letters_only}\n"
-                result_text += f"Độ tin cậy TB: {sum(c for _, c in results) / len(results) * 100:.1f}%"
-                self.result_text.setText(result_text)
-                
-                # Hiển thị popup kết quả (không block UI)
-                dialog_text = f"Chữ nhận dạng được:\n\n{letters_only}\n\n({len(object_images)} chữ cái)"
-                dialog = ResultDialog(dialog_text, self)
-                dialog.show()
-                
-            else:  # Chế độ hình học
-                # Nhận dạng hình học
-                results = self.shape_recognizer.recognize_shapes(object_images)
-                
-                # Tên hình bằng tiếng Việt
-                shape_names = {'circle': 'Hình tròn', 'rectangle': 'Hình chữ nhật', 'triangle': 'Tam giác'}
-                
-                # Đếm số lượng từng loại hình
-                shape_counts = {}
-                for shape, _ in results:
-                    shape_counts[shape] = shape_counts.get(shape, 0) + 1
-                
-                # Hiển thị trong text area
-                result_text = f"✓ Phát hiện {len(object_images)} hình\n\nKết quả:\n"
-                for i, (shape, confidence) in enumerate(results):
-                    vn_shape = shape_names.get(shape, shape)
-                    result_text += f"  {i+1}. {vn_shape} ({confidence*100:.1f}%)\n"
-                result_text += f"\nThống kê:\n"
-                for shape, count in sorted(shape_counts.items()):
-                    result_text += f"  {shape_names.get(shape, shape)}: {count}\n"
-                result_text += f"\nĐộ tin cậy TB: {sum(c for _, c in results) / len(results) * 100:.1f}%"
-                self.result_text.setText(result_text)
-                
-                # Hiển thị popup kết quả (không block UI)
-                summary = "\n".join([f"{shape_names.get(s, s)}: {c}" for s, c in sorted(shape_counts.items())])
-                dialog_text = f"Phát hiện {len(object_images)} hình:\n\n{summary}"
-                dialog = ResultDialog(dialog_text, self)
-                dialog.show()
-            
         except Exception as e:
-            error_msg = f"Lỗi khi xử lý ảnh:\n{str(e)}"
+            error_msg = f"Lỗi khi hiển thị kết quả:\n{str(e)}"
             self.result_text.setText(f"❌ {error_msg}")
-            QMessageBox.critical(self, "Lỗi", error_msg)
             import traceback
             traceback.print_exc()
         finally:
             # Enable lại buttons
-            self.process_button.setEnabled(True)
-            self.upload_button.setEnabled(True)
-            self.clear_button.setEnabled(True)
-            self.digit_mode_radio.setEnabled(True)
-            self.letter_mode_radio.setEnabled(True)
-            self.shape_mode_radio.setEnabled(True)
+            self._set_buttons_enabled(True)
+    
+    def _show_digit_results(self, object_images, results):
+        """Hiển thị kết quả nhận dạng chữ số"""
+        digits_only = "".join([str(digit) for digit, _ in results])
+        
+        result_text = f"✓ Phát hiện {len(object_images)} chữ số\n\n"
+        result_text += f"Kết quả: {' '.join([str(d) for d, _ in results])}\n\n"
+        result_text += f"Chuỗi số: {digits_only}\n"
+        result_text += f"Độ tin cậy TB: {sum(c for _, c in results) / len(results) * 100:.1f}%"
+        self.result_text.setText(result_text)
+        
+        dialog_text = f"Số nhận dạng được:\n\n{digits_only}\n\n({len(object_images)} chữ số)"
+        dialog = ResultDialog(dialog_text, self)
+        dialog.show()
+    
+    def _show_letter_results(self, object_images, results):
+        """Hiển thị kết quả nhận dạng chữ cái"""
+        letters_only = "".join([letter for letter, _ in results])
+        
+        result_text = f"✓ Phát hiện {len(object_images)} chữ cái\n\n"
+        result_text += f"Kết quả: {' '.join([l for l, _ in results])}\n\n"
+        result_text += f"Chuỗi chữ: {letters_only}\n"
+        result_text += f"Độ tin cậy TB: {sum(c for _, c in results) / len(results) * 100:.1f}%"
+        self.result_text.setText(result_text)
+        
+        dialog_text = f"Chữ nhận dạng được:\n\n{letters_only}\n\n({len(object_images)} chữ cái)"
+        dialog = ResultDialog(dialog_text, self)
+        dialog.show()
+    
+    def _show_shape_results(self, object_images, results):
+        """Hiển thị kết quả nhận dạng hình học"""
+        shape_names = {'circle': 'Hình tròn', 'rectangle': 'Hình chữ nhật', 'triangle': 'Tam giác'}
+        
+        shape_counts = {}
+        for shape, _ in results:
+            shape_counts[shape] = shape_counts.get(shape, 0) + 1
+        
+        result_text = f"✓ Phát hiện {len(object_images)} hình\n\nKết quả:\n"
+        for i, (shape, confidence) in enumerate(results):
+            vn_shape = shape_names.get(shape, shape)
+            result_text += f"  {i+1}. {vn_shape} ({confidence*100:.1f}%)\n"
+        result_text += f"\nThống kê:\n"
+        for shape, count in sorted(shape_counts.items()):
+            result_text += f"  {shape_names.get(shape, shape)}: {count}\n"
+        result_text += f"\nĐộ tin cậy TB: {sum(c for _, c in results) / len(results) * 100:.1f}%"
+        self.result_text.setText(result_text)
+        
+        summary = "\n".join([f"{shape_names.get(s, s)}: {c}" for s, c in sorted(shape_counts.items())])
+        dialog_text = f"Phát hiện {len(object_images)} hình:\n\n{summary}"
+        dialog = ResultDialog(dialog_text, self)
+        dialog.show()
     
     # === Hỗ trợ Kéo & Thả ===
     
