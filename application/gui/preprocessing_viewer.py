@@ -50,10 +50,16 @@ class PreprocessingViewer(QWidget):
         # Phân loại các bước
         main_steps = {}  # Các bước xử lý chính
         digit_steps = {}  # Các chữ số đã cắt
+        letter_steps = {}  # Các chữ cái đã cắt
+        shape_steps = {}  # Các hình đã cắt
         
         for key, img in preprocessing_steps.items():
             if key.startswith('7_digit_'):
                 digit_steps[key] = img
+            elif key.startswith('7_letter_'):
+                letter_steps[key] = img
+            elif key.startswith('7_shape_'):
+                shape_steps[key] = img
             else:
                 main_steps[key] = img
         
@@ -62,10 +68,16 @@ class PreprocessingViewer(QWidget):
             img = main_steps[step_name]
             self.add_step_row(step_name, [img])
         
-        # Hiển thị tất cả chữ số trên 1 dòng
+        # Chỉ hiển thị bước 7 của chế độ tương ứng (không hiển thị cả 3 loại)
         if digit_steps:
             digit_images = [digit_steps[k] for k in sorted(digit_steps.keys())]
-            self.add_step_row("Segmented Digits (28x28)", digit_images)
+            self.add_step_row("7_segmented_digits", digit_images)
+        elif letter_steps:
+            letter_images = [letter_steps[k] for k in sorted(letter_steps.keys())]
+            self.add_step_row("7_segmented_letters", letter_images)
+        elif shape_steps:
+            shape_images = [shape_steps[k] for k in sorted(shape_steps.keys())]
+            self.add_step_row("7_segmented_shapes", shape_images)
     
     def add_step_row(self, step_name, images):
         """Thêm một dòng hiển thị bước xử lý với nhiều ảnh"""
@@ -109,17 +121,18 @@ class PreprocessingViewer(QWidget):
             '1_original': '1. Ảnh gốc / Original Image',
             '2_grayscale': '2. Chuyển xám / Grayscale',
             '3_blurred': '3. Làm mờ / Gaussian Blur',
-            '4_threshold': '4. Nhị phân hóa / Thresholding',
-            '5_morphology': '5. Xử lý hình thái / Morphology',
-            '6_contours': '6. Phát hiện viền / Contours',
+            '4_threshold': '4. Nhị phân hóa / Thresholding (OTSU)',
+            '5_morphology': '5. Xử lý hình thái / Morphology (Close+Open)',
+            '6_contours': '6. Phát hiện viền / Contours Detection',
+            '7_segmented_digits': '7. Các chữ số / Segmented Digits (28x28)',
+            '7_segmented_letters': '7. Các chữ cái / Segmented Letters (28x28)',
+            '7_segmented_shapes': '7. Các hình đã cắt / Segmented Shapes (64x64)',
         }
         
         if step_name in name_map:
             return name_map[step_name]
-        elif step_name.startswith('7_digit_'):
+        elif step_name.startswith('7_digit_') or step_name.startswith('7_letter_') or step_name.startswith('7_shape_'):
             return step_name
-        elif 'Segmented Digits' in step_name:
-            return '7. Các chữ số / ' + step_name
         else:
             return step_name.replace('_', ' ').title()
     

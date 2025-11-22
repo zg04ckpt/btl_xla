@@ -4,15 +4,19 @@ Main Window - Cửa sổ chính ứng dụng nhận dạng chữ số viết tay
 from PyQt5.QtWidgets import (QMainWindow, QLabel, QPushButton, QFileDialog, 
                               QVBoxLayout, QHBoxLayout, QWidget, QMessageBox, 
                               QFrame, QTextEdit, QRadioButton, QButtonGroup)
-from PyQt5.QtGui import QPixmap, QDragEnterEvent, QDropEvent
+from PyQt5.QtGui import QPixmap, QDragEnterEvent, QDropEvent, QKeyEvent
 from PyQt5.QtCore import Qt
 import os
 
 from application.preprocessing.image_processor import ImageProcessor
+from application.preprocessing.letter_processor import LetterProcessor
 from application.recognition.digit_recognizer import DigitRecognizer
 from application.recognition.shape_recognizer import ShapeRecognizer
+from application.recognition.letter_recognizer import LetterRecognizer
 from application.gui.preprocessing_viewer import PreprocessingViewer
 from application.gui.result_dialog import ResultDialog
+from application.gui.drawing_canvas import DrawingCanvas
+import tempfile
 
 class MainWindow(QMainWindow):
     """Cửa sổ chính ứng dụng"""
@@ -20,7 +24,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.image_path = None
-        self.recognition_mode = 'digits'  # Chế độ: 'digits' hoặc 'shapes'
+        self.temp_canvas_file = None
+        self.recognition_mode = 'digits'  # Chế độ: 'digits', 'shapes', hoặc 'letters'
         self.init_ui()
         
         # Hiển thị cửa sổ trước khi khởi tạo model
@@ -29,17 +34,20 @@ class MainWindow(QMainWindow):
         
         self.result_text.setText("⏳ Đang khởi tạo...")
         
-        # Khởi tạo các bộ xử lý
-        self.image_processor = ImageProcessor()
+        # Khởi tạo các bộ xử lý riêng biệt cho từng mode
+        self.shape_processor = ImageProcessor()  # Chỉ cho shapes
+        self.letter_processor = LetterProcessor()  # Chỉ cho letters
+        # Digit processor sẽ được thêm sau (hiện tại dùng ImageProcessor cũ)
         self.digit_recognizer = DigitRecognizer()
         self.shape_recognizer = ShapeRecognizer()
+        self.letter_recognizer = LetterRecognizer()
         
         self.result_text.setText("✓ Sẵn sàng! Kéo thả hoặc tải ảnh để bắt đầu.")
     
     def init_ui(self):
         """Khởi tạo giao diện người dùng"""
-        self.setWindowTitle("Nhận Dạng Chữ Số và Hình Học")
-        self.setGeometry(100, 100, 850, 650)  # Kích thước 850x650 (tăng 50px)
+        self.setWindowTitle("Nhận Dạng Chữ Số, Chữ Cái và Hình Học - Nhấn F11 để thoát fullscreen")
+        self.showFullScreen()  # Full screen (F11 hoặc ESC để thoát)
         
         # Main widget and layout
         main_widget = QWidget()
@@ -71,45 +79,88 @@ class MainWindow(QMainWindow):
         self.digit_mode_radio.setChecked(True)
         self.digit_mode_radio.setStyleSheet("font-size: 15px;")
         
+        self.letter_mode_radio = QRadioButton("Chữ cái")
+        self.letter_mode_radio.setStyleSheet("font-size: 15px;")
+        
         self.shape_mode_radio = QRadioButton("Hình học")
         self.shape_mode_radio.setStyleSheet("font-size: 15px;")
         
         # Button group
         self.mode_button_group = QButtonGroup()
         self.mode_button_group.addButton(self.digit_mode_radio)
+        self.mode_button_group.addButton(self.letter_mode_radio)
         self.mode_button_group.addButton(self.shape_mode_radio)
         
         # Connect signals
         self.digit_mode_radio.toggled.connect(self.on_mode_changed)
+        self.letter_mode_radio.toggled.connect(self.on_mode_changed)
         
         mode_layout.addWidget(self.digit_mode_radio)
+        mode_layout.addWidget(self.letter_mode_radio)
         mode_layout.addWidget(self.shape_mode_radio)
         mode_layout.addStretch()
         
         mode_frame.setLayout(mode_layout)
         main_layout.addWidget(mode_frame)
         
-        # === 1. Image upload area (drag-drop/paste/upload) ===
-        upload_frame = QFrame()
-        upload_frame.setFrameStyle(QFrame.Box | QFrame.Sunken)
-        upload_frame.setLineWidth(2)
-        upload_frame.setStyleSheet("""
+        # Layout chính cho phần nội dung chia trái/phải
+        content_layout = QHBoxLayout()
+        content_layout.setSpacing(15)
+        
+        # === Khu vực bên trái: tải ảnh + kết quả ===
+        left_panel = QFrame()
+        left_panel.setStyleSheet("""
+            QFrame {
+                background-color: #ffffff;
+                border: 1px solid #e0e0e0;
+                border-radius: 6px;
+                padding: 10px;
+            }
+        """)
+        left_layout = QVBoxLayout()
+        left_layout.setSpacing(12)
+        
+        # === 1. Drawing Canvas ===
+        canvas_frame = QFrame()
+        canvas_frame.setStyleSheet("""
             QFrame {
                 background-color: #f0f0f0;
-                border: 2px dashed #999;
+                border: 2px solid #999;
                 border-radius: 5px;
-                min-height: 250px;
+                padding: 10px;
             }
         """)
         
-        upload_layout = QVBoxLayout()
+        canvas_layout = QVBoxLayout()
         
-        # Image display label
-        self.image_label = QLabel("Kéo thả ảnh vào đây hoặc nhấn nút tải ảnh")
-        self.image_label.setAlignment(Qt.AlignCenter)
-        self.image_label.setMinimumHeight(200)
-        self.image_label.setStyleSheet("font-size: 16px; color: #666;")
-        upload_layout.addWidget(self.image_label)
+        canvas_title = QLabel("✏️ Khu vực vẽ/Tải ảnh")
+        canvas_title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        canvas_layout.addWidget(canvas_title)
+        
+        # Drawing canvas (responsive size)
+        self.canvas = DrawingCanvas(width=600, height=400)
+        canvas_layout.addWidget(self.canvas, stretch=1)
+        
+        # Buttons row
+        buttons_layout = QHBoxLayout()
+        
+        # Clear button
+        self.clear_button = QPushButton("🗑️ Xóa")
+        self.clear_button.setStyleSheet("""
+            QPushButton {
+                background-color: #f44336;
+                color: white;
+                font-size: 14px;
+                font-weight: bold;
+                padding: 10px 20px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #da190b;
+            }
+        """)
+        self.clear_button.clicked.connect(self.clear_canvas)
+        buttons_layout.addWidget(self.clear_button)
         
         # Upload button
         self.upload_button = QPushButton("📁 Tải ảnh")
@@ -117,9 +168,9 @@ class MainWindow(QMainWindow):
             QPushButton {
                 background-color: #4CAF50;
                 color: white;
-                font-size: 16px;
+                font-size: 14px;
                 font-weight: bold;
-                padding: 15px;
+                padding: 10px 20px;
                 border-radius: 5px;
             }
             QPushButton:hover {
@@ -127,17 +178,20 @@ class MainWindow(QMainWindow):
             }
         """)
         self.upload_button.clicked.connect(self.upload_image)
-        upload_layout.addWidget(self.upload_button)
+        buttons_layout.addWidget(self.upload_button)
         
-        upload_frame.setLayout(upload_layout)
-        main_layout.addWidget(upload_frame)
+        buttons_layout.addStretch()
+        canvas_layout.addLayout(buttons_layout)
+        
+        canvas_frame.setLayout(canvas_layout)
+        left_layout.addWidget(canvas_frame)
         
         # Enable drag and drop
         self.setAcceptDrops(True)
         
         # === 2. Process button ===
         self.process_button = QPushButton("▶ Xử lý ảnh")
-        self.process_button.setEnabled(False)
+        self.process_button.setEnabled(True)  # Luôn bật cho canvas vẽ
         self.process_button.setStyleSheet("""
             QPushButton {
                 background-color: #2196F3;
@@ -156,13 +210,9 @@ class MainWindow(QMainWindow):
             }
         """)
         self.process_button.clicked.connect(self.process_image)
-        main_layout.addWidget(self.process_button)
+        left_layout.addWidget(self.process_button)
         
-        # === 3. Preprocessing steps viewer ===
-        self.preprocessing_viewer = PreprocessingViewer()
-        main_layout.addWidget(self.preprocessing_viewer, stretch=1)
-        
-        # === 4. Result display ===
+        # === 3. Result display ===
         result_frame = QFrame()
         result_frame.setFrameStyle(QFrame.Box)
         result_frame.setStyleSheet("""
@@ -196,20 +246,61 @@ class MainWindow(QMainWindow):
         result_layout.addWidget(self.result_text)
         
         result_frame.setLayout(result_layout)
-        main_layout.addWidget(result_frame)
+        left_layout.addWidget(result_frame)
+        left_layout.addStretch(1)
+        left_panel.setLayout(left_layout)
+        content_layout.addWidget(left_panel, stretch=1)
+        
+        # === Khu vực bên phải: các bước xử lý ===
+        right_panel = QFrame()
+        right_panel.setStyleSheet("""
+            QFrame {
+                background-color: #f7f9fc;
+                border: 1px solid #d0d7de;
+                border-radius: 6px;
+                padding: 10px;
+            }
+        """)
+        right_layout = QVBoxLayout()
+        right_layout.setSpacing(10)
+        
+        steps_label = QLabel("🔍 Các bước xử lý ảnh")
+        steps_label.setStyleSheet("font-size: 16px; font-weight: bold;")
+        right_layout.addWidget(steps_label)
+        
+        self.preprocessing_viewer = PreprocessingViewer()
+        right_layout.addWidget(self.preprocessing_viewer, stretch=1)
+        
+        right_panel.setLayout(right_layout)
+        content_layout.addWidget(right_panel, stretch=1)
+        
+        main_layout.addLayout(content_layout, stretch=1)
         
         main_widget.setLayout(main_layout)
     
     def on_mode_changed(self):
-        """Xử lý khi đổi chế độ (Chữ số/Hình học)"""
+        """Xử lý khi đổi chế độ (Chữ số/Chữ cái/Hình học)"""
         if self.digit_mode_radio.isChecked():
             self.recognition_mode = 'digits'
+        elif self.letter_mode_radio.isChecked():
+            self.recognition_mode = 'letters'
         else:
             self.recognition_mode = 'shapes'
         
-        # Xóa kết quả cũ khi đổi chế độ
-        if self.image_path:
-            self.result_text.setText(f"Chế độ: {'Chữ số' if self.recognition_mode == 'digits' else 'Hình học'}\n\nNhấn 'Xử lý' để nhận dạng.")
+        # Xóa canvas và kết quả cũ khi đổi chế độ
+        self.canvas.clear_canvas()
+        self.image_path = None
+        self.preprocessing_viewer.clear_steps()
+        
+        mode_names = {'digits': 'Chữ số', 'letters': 'Chữ cái', 'shapes': 'Hình học'}
+        self.result_text.setText(f"Chế độ: {mode_names[self.recognition_mode]}\n\nVẽ hoặc tải ảnh để nhận dạng.")
+    
+    def clear_canvas(self):
+        """Xóa canvas vẽ"""
+        self.canvas.clear_canvas()
+        self.image_path = None
+        self.result_text.setText("Canvas đã xóa. Vẽ hoặc tải ảnh để nhận dạng.")
+        self.preprocessing_viewer.clear_steps()
     
     def upload_image(self):
         """Mở hộp thoại chọn file ảnh"""
@@ -233,15 +324,17 @@ class MainWindow(QMainWindow):
         
         self.image_path = file_path
         
-        # Display image
+        # Load image to canvas
         pixmap = QPixmap(file_path)
         if pixmap.isNull():
             QMessageBox.warning(self, "Lỗi", "Không thể tải ảnh!")
             return
         
-        # Scale to fit label
-        scaled_pixmap = pixmap.scaled(400, 150, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.image_label.setPixmap(scaled_pixmap)
+        # Scale and draw on canvas
+        scaled_pixmap = pixmap.scaled(self.canvas.width(), self.canvas.height(), 
+                                      Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.canvas.image = scaled_pixmap.toImage()
+        self.canvas.update()
         
         # Enable process button
         self.process_button.setEnabled(True)
@@ -252,16 +345,42 @@ class MainWindow(QMainWindow):
     
     def process_image(self):
         """Xử lý ảnh và nhận dạng chữ số hoặc hình học"""
-        if not self.image_path:
-            return
-        
         try:
-            # Hiển thị thông báo đang xử lý
-            mode_text = "chữ số" if self.recognition_mode == 'digits' else "hình học"
-            self.result_text.setText(f"Đang xử lý {mode_text}...")
+            # Lưu canvas thành file tạm
+            if self.temp_canvas_file:
+                try:
+                    os.unlink(self.temp_canvas_file)
+                except:
+                    pass
             
-            # Bước 1: Tiền xử lý ảnh theo chế độ
-            preprocessing_steps, object_images = self.image_processor.process_image(self.image_path, self.recognition_mode)
+            self.temp_canvas_file = tempfile.mktemp(suffix='.png')
+            self.canvas.save_to_file(self.temp_canvas_file)
+            self.image_path = self.temp_canvas_file
+            
+            # Hiển thị thông báo đang xử lý và disable buttons
+            mode_texts = {'digits': 'chữ số', 'letters': 'chữ cái', 'shapes': 'hình học'}
+            mode_text = mode_texts.get(self.recognition_mode, 'chữ số')
+            self.result_text.setText(f"⏳ Đang xử lý {mode_text}...\n\nVui lòng chờ...")
+            
+            # Disable buttons
+            self.process_button.setEnabled(False)
+            self.upload_button.setEnabled(False)
+            self.clear_button.setEnabled(False)
+            self.digit_mode_radio.setEnabled(False)
+            self.letter_mode_radio.setEnabled(False)
+            self.shape_mode_radio.setEnabled(False)
+            
+            # Force update UI
+            self.repaint()
+            
+            # Bước 1: Tiền xử lý ảnh theo chế độ (dùng processor phù hợp)
+            if self.recognition_mode == 'letters':
+                preprocessing_steps, object_images = self.letter_processor.process_image(self.image_path, 'letters')
+            elif self.recognition_mode == 'shapes':
+                preprocessing_steps, object_images = self.shape_processor.process_image(self.image_path, 'shapes')
+            else:  # digits - tạm thời dùng letter_processor với logic tương tự
+                # TODO: Tạo DigitProcessor riêng
+                preprocessing_steps, object_images = self.letter_processor.process_image(self.image_path, 'digits')
             
             # Hiển thị các bước tiền xử lý
             self.preprocessing_viewer.display_preprocessing_steps(preprocessing_steps)
@@ -285,10 +404,29 @@ class MainWindow(QMainWindow):
                 result_text += f"Độ tin cậy TB: {sum(c for _, c in results) / len(results) * 100:.1f}%"
                 self.result_text.setText(result_text)
                 
-                # Hiển thị popup kết quả ở giữa màn hình (kích thước 567x433 = 2/3 giao diện chính)
+                # Hiển thị popup kết quả (không block UI)
                 dialog_text = f"Số nhận dạng được:\n\n{digits_only}\n\n({len(object_images)} chữ số)"
                 dialog = ResultDialog(dialog_text, self)
-                dialog.exec_()
+                dialog.show()
+            
+            elif self.recognition_mode == 'letters':
+                # Nhận dạng chữ cái
+                results = self.letter_recognizer.recognize_letters(object_images)
+                
+                # Tạo chuỗi kết quả
+                letters_only = "".join([letter for letter, _ in results])
+                
+                # Hiển thị trong text area
+                result_text = f"✓ Phát hiện {len(object_images)} chữ cái\n\n"
+                result_text += f"Kết quả: {' '.join([l for l, _ in results])}\n\n"
+                result_text += f"Chuỗi chữ: {letters_only}\n"
+                result_text += f"Độ tin cậy TB: {sum(c for _, c in results) / len(results) * 100:.1f}%"
+                self.result_text.setText(result_text)
+                
+                # Hiển thị popup kết quả (không block UI)
+                dialog_text = f"Chữ nhận dạng được:\n\n{letters_only}\n\n({len(object_images)} chữ cái)"
+                dialog = ResultDialog(dialog_text, self)
+                dialog.show()
                 
             else:  # Chế độ hình học
                 # Nhận dạng hình học
@@ -313,11 +451,11 @@ class MainWindow(QMainWindow):
                 result_text += f"\nĐộ tin cậy TB: {sum(c for _, c in results) / len(results) * 100:.1f}%"
                 self.result_text.setText(result_text)
                 
-                # Hiển thị popup kết quả ở giữa màn hình (kích thước 567x433 = 2/3 giao diện chính)
+                # Hiển thị popup kết quả (không block UI)
                 summary = "\n".join([f"{shape_names.get(s, s)}: {c}" for s, c in sorted(shape_counts.items())])
                 dialog_text = f"Phát hiện {len(object_images)} hình:\n\n{summary}"
                 dialog = ResultDialog(dialog_text, self)
-                dialog.exec_()
+                dialog.show()
             
         except Exception as e:
             error_msg = f"Lỗi khi xử lý ảnh:\n{str(e)}"
@@ -325,6 +463,14 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Lỗi", error_msg)
             import traceback
             traceback.print_exc()
+        finally:
+            # Enable lại buttons
+            self.process_button.setEnabled(True)
+            self.upload_button.setEnabled(True)
+            self.clear_button.setEnabled(True)
+            self.digit_mode_radio.setEnabled(True)
+            self.letter_mode_radio.setEnabled(True)
+            self.shape_mode_radio.setEnabled(True)
     
     # === Hỗ trợ Kéo & Thả ===
     
@@ -341,3 +487,14 @@ class MainWindow(QMainWindow):
         if urls:
             file_path = urls[0].toLocalFile()
             self.load_image(file_path)
+    
+    def keyPressEvent(self, event: QKeyEvent):
+        """Xử lý phím tắt"""
+        if event.key() == Qt.Key_F11 or event.key() == Qt.Key_Escape:
+            # F11 hoặc ESC để toggle fullscreen
+            if self.isFullScreen():
+                self.showMaximized()
+            else:
+                self.showFullScreen()
+        else:
+            super().keyPressEvent(event)

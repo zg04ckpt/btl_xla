@@ -26,5 +26,6 @@ Thumbs.db
 # Project specific
 debug_images/
 shapes_dataset/
+custom_handwriting_dataset/
 *.pkl
 *.pkl.result

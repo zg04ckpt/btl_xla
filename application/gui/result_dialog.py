@@ -17,7 +17,10 @@ class ResultDialog(QDialog):
     def init_ui(self):
         """Khởi tạo giao diện"""
         self.setWindowTitle("Kết quả Nhận dạng")
-        self.setFixedSize(567, 433)  # 2/3 kích thước app (850x650)
+        self.setFixedSize(567, 433)
+        
+        # Cho phép đóng dialog bằng nút X hoặc ESC
+        self.setModal(False)  # Không block cửa sổ chính
         
         # Layout chính
         layout = QVBoxLayout()
