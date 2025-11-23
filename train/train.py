@@ -70,8 +70,16 @@ model.compile(
 )
 
 # Callbacks
-early_stop = EarlyStopping(monitor="val_loss", patience=5, restore_best_weights=True)
-reduce_lr = ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=3, min_lr=0.00001)
+early_stop = EarlyStopping(
+    monitor="val_loss", 
+    patience=5, 
+    restore_best_weights=True
+)
+reduce_lr = ReduceLROnPlateau(
+    monitor="val_loss", 
+    factor=0.5, patience=3, 
+    min_lr=0.00001
+)
 
 # Training
 print("\nStarting training...")

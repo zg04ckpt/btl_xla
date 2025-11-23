@@ -8,8 +8,7 @@ from PyQt5.QtGui import QPixmap, QDragEnterEvent, QDropEvent, QKeyEvent
 from PyQt5.QtCore import Qt
 import os
 
-from application.preprocessing.image_processor import ImageProcessor
-from application.preprocessing.letter_processor import LetterProcessor
+from application.preprocessing import DigitPreprocessor, LetterPreprocessor, ShapePreprocessor
 from application.recognition.digit_recognizer import DigitRecognizer
 from application.recognition.shape_recognizer import ShapeRecognizer
 from application.recognition.letter_recognizer import LetterRecognizer
@@ -37,9 +36,10 @@ class MainWindow(QMainWindow):
         self.result_text.setText("⏳ Đang khởi tạo...")
         
         # Khởi tạo các bộ xử lý riêng biệt cho từng mode
-        self.shape_processor = ImageProcessor()  # Chỉ cho shapes
-        self.letter_processor = LetterProcessor()  # Chỉ cho letters
-        # Digit processor sẽ được thêm sau (hiện tại dùng ImageProcessor cũ)
+        self.digit_preprocessor = DigitPreprocessor(target_size=(28, 28), inner_size=20)
+        self.letter_preprocessor = LetterPreprocessor(target_size=(28, 28), inner_size=20)
+        self.shape_preprocessor = ShapePreprocessor(target_size=(64, 64), inner_size=56)
+        
         self.digit_recognizer = DigitRecognizer()
         self.shape_recognizer = ShapeRecognizer()
         self.letter_recognizer = LetterRecognizer()
@@ -372,9 +372,10 @@ class MainWindow(QMainWindow):
             self._set_buttons_enabled(False)
             
             # Tạo worker thread để xử lý
-            processors = {
-                'letter': self.letter_processor,
-                'shape': self.shape_processor
+            preprocessors = {
+                'digit': self.digit_preprocessor,
+                'letter': self.letter_preprocessor,
+                'shape': self.shape_preprocessor
             }
             recognizers = {
                 'digit': self.digit_recognizer,
@@ -385,7 +386,7 @@ class MainWindow(QMainWindow):
             self.worker = ProcessingWorker(
                 self.image_path,
                 self.recognition_mode,
-                processors,
+                preprocessors,
                 recognizers
             )
             

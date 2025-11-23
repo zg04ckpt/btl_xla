@@ -17,7 +17,8 @@ for shape_img in shape_images:
     if shape_img.shape != (64, 64):
         shape_img = cv2.resize(shape_img, (64, 64))
     
-    shape_img = shape_img.astype("float32") / 255.0
+    # Preprocessor đã normalize rồi, không cần chia 255 nữa
+    shape_img = shape_img.astype("float32")
     shape_img = shape_img.reshape(1, 64, 64, 1)
     
     prediction = model.predict(shape_img, verbose=0)

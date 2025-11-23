@@ -1,7 +1,7 @@
 """Debug script to test shape preprocessing"""
-from application.preprocessing.image_processor import ImageProcessor
+from application.preprocessing import ShapePreprocessor
 
-proc = ImageProcessor()
+proc = ShapePreprocessor(target_size=(64, 64), inner_size=56)
 
 # Test với ảnh vẽ tay hình học
 steps, imgs = proc.process_image('test-chu-3.png', mode='shapes')
