@@ -8,7 +8,7 @@ from PyQt5.QtGui import QPixmap, QDragEnterEvent, QDropEvent, QKeyEvent
 from PyQt5.QtCore import Qt
 import os
 
-from application.preprocessing import DigitPreprocessor, LetterPreprocessor, ShapePreprocessor
+from application.preprocessing import GeneralPreprocessor
 from application.recognition.digit_recognizer import DigitRecognizer
 from application.recognition.shape_recognizer import ShapeRecognizer
 from application.recognition.letter_recognizer import LetterRecognizer
@@ -36,9 +36,10 @@ class MainWindow(QMainWindow):
         self.result_text.setText("⏳ Đang khởi tạo...")
         
         # Khởi tạo các bộ xử lý riêng biệt cho từng mode
-        self.digit_preprocessor = DigitPreprocessor(target_size=(28, 28), inner_size=20)
-        self.letter_preprocessor = LetterPreprocessor(target_size=(28, 28), inner_size=20)
-        self.shape_preprocessor = ShapePreprocessor(target_size=(64, 64), inner_size=56)
+
+        self.digit_preprocessor = GeneralPreprocessor(target_size=(28, 28), inner_size=20, min_h=10, min_w=10, min_area=100)
+        self.letter_preprocessor = GeneralPreprocessor(target_size=(28, 28), inner_size=20, min_h=20, min_w=10, min_area=200)
+        self.shape_preprocessor = GeneralPreprocessor(target_size=(64, 64), inner_size=50, min_h=20, min_w=20, min_area=400)
         
         self.digit_recognizer = DigitRecognizer()
         self.shape_recognizer = ShapeRecognizer()

@@ -3,13 +3,9 @@ Preprocessing package - Xử lý tiền xử lý cho các loại ký tự và h�
 """
 
 from .base_preprocessor import BasePreprocessor
-from .digit_preprocessing import DigitPreprocessor
-from .letter_preprocessing import LetterPreprocessor
-from .shape_preprocessing import ShapePreprocessor
+from .general_preprocessor import GeneralPreprocessor
 
 __all__ = [
     'BasePreprocessor',
-    'DigitPreprocessor',
-    'LetterPreprocessor',
-    'ShapePreprocessor',
+    'GeneralPreprocessor',
 ]
