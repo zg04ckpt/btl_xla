@@ -61,6 +61,7 @@ def create_model(use_pretrained=True):
         return model
 
     model = Sequential([
+        # Block 1
         Conv2D(32, (3, 3), activation="relu", padding="same", input_shape=(28, 28, 1)),
         BatchNormalization(),
         Conv2D(32, (3, 3), activation="relu", padding="same"),
@@ -68,6 +69,7 @@ def create_model(use_pretrained=True):
         MaxPooling2D(2, 2),
         Dropout(0.25),
 
+        # Block 2
         Conv2D(64, (3, 3), activation="relu", padding="same"),
         BatchNormalization(),
         Conv2D(64, (3, 3), activation="relu", padding="same"),
@@ -75,6 +77,7 @@ def create_model(use_pretrained=True):
         MaxPooling2D(2, 2),
         Dropout(0.25),
 
+        # Block 3
         Conv2D(128, (3, 3), activation="relu", padding="same"),
         BatchNormalization(),
         Conv2D(128, (3, 3), activation="relu", padding="same"),
@@ -82,6 +85,7 @@ def create_model(use_pretrained=True):
         MaxPooling2D(2, 2),
         Dropout(0.4),
 
+        # Fully Connected
         Flatten(),
         Dense(256, activation="relu"),
         BatchNormalization(),
@@ -90,7 +94,6 @@ def create_model(use_pretrained=True):
         Dense(128, activation="relu"),
         BatchNormalization(),
         Dropout(0.5),
-
         Dense(26, activation="softmax")
     ])
 
