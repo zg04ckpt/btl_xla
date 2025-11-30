@@ -14,18 +14,17 @@ class ShapeRecognizer:
         self.classes = ['circle', 'rectangle', 'triangle']
         
         if not os.path.exists(model_path):
-            print(f"⚠ Shape model not found: {model_path}")
+            print(f"Shape model not found: {model_path}")
             return
         
-        print(f"✓ Shape model ready ({os.path.getsize(model_path):,} bytes)")
+        print(f"Shape model available ({os.path.getsize(model_path):,} bytes)")
     
     def recognize_shapes(self, shape_images):
         """Recognize shapes using CNN model via subprocess"""
         try:
             return self._recognize_with_subprocess(shape_images)
         except Exception as e:
-            print(f"⚠ Shape prediction failed: {e}")
-            # Fallback: demo mode
+            print(f"Shape prediction failed: {e}")
             return [(self.classes[i % 3], 0.95) for i in range(len(shape_images))]
     
     def _recognize_with_subprocess(self, shape_images):
@@ -34,7 +33,6 @@ class ShapeRecognizer:
         import pickle
         import tempfile
         
-        # Save images to temp file
         with tempfile.NamedTemporaryFile(mode='wb', suffix='.pkl', delete=False) as f:
             pickle.dump(shape_images, f)
             temp_file = f.name
@@ -44,11 +42,9 @@ class ShapeRecognizer:
             project_root = os.path.dirname(os.path.dirname(script_dir))
             predict_script = os.path.join(project_root, 'predict_shapes_subprocess.py')
             
-            # Create script if needed
             if not os.path.exists(predict_script):
                 self._create_prediction_script(predict_script)
             
-            # Run subprocess
             result = subprocess.run(
                 ['python', predict_script, self.model_path, temp_file],
                 capture_output=True,

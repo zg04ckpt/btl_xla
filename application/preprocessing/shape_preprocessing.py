@@ -1,155 +1,144 @@
 import os
-import cv2
+from typing import Dict, List, Tuple
+
 import numpy as np
+from PIL import Image, ImageDraw, ImageFilter, ImageOps
+from scipy.ndimage import binary_closing, binary_opening, find_objects, label
+
 from .base_preprocessor import BasePreprocessor
 
 
 class ShapePreprocessor(BasePreprocessor):
-    
-    def __init__(self, target_size=(64, 64), inner_size=56):
-        """
-            target_size: Kích thước output (mặc định 64x64 cho shapes)
-            inner_size: Kích thước vùng chứa shape trước khi pad (mặc định 56x56)
-        """
+    """
+    Preprocessor cho nhận dạng hình học (tam giác / vuông / tròn)
+    sử dụng ảnh 64x64.
+    """
+
+    def __init__(self, target_size: Tuple[int, int] = (64, 64), inner_size: int = 56) -> None:
         super().__init__(target_size, inner_size)
-    
-    def filter_contour(self, cnt, min_w=20, min_h=20, min_area=400):
-        """
-        Override filter_contour với threshold phù hợp cho shapes
-        """
-        x, y, w, h = cv2.boundingRect(cnt)
-        
-        # Kiểm tra kích thước cơ bản
-        if w < min_w or h < min_h or w * h < min_area:
+
+
+    def _load_images(self, image_path: str) -> Tuple[np.ndarray, np.ndarray]:
+        """Đọc ảnh RGB + grayscale."""
+        with Image.open(image_path) as img:
+            rgb = img.convert("RGB")
+            gray = ImageOps.grayscale(rgb)
+            return np.array(rgb, dtype=np.uint8), np.array(gray, dtype=np.uint8)
+
+    def _gaussian_blur(self, image: np.ndarray, radius: float = 1.0) -> np.ndarray:
+        pil_img = Image.fromarray(image)
+        return np.array(pil_img.filter(ImageFilter.GaussianBlur(radius=radius)), dtype=np.uint8)
+
+    def _otsu_threshold(self, image: np.ndarray) -> np.ndarray:
+        hist, _ = np.histogram(image.ravel(), bins=256, range=(0, 256))
+        hist = hist.astype(np.float64)
+        total = hist.sum()
+        if total == 0:
+            return np.zeros_like(image, dtype=np.uint8)
+
+        prob = hist / total
+        cum_prob = np.cumsum(prob)
+        cum_mean = np.cumsum(prob * np.arange(256))
+        global_mean = cum_mean[-1]
+
+        denominator = cum_prob * (1 - cum_prob)
+        denominator[denominator == 0] = 1
+        between_var = (global_mean * cum_prob - cum_mean) ** 2 / denominator
+
+        threshold = int(np.argmax(between_var))
+        return (image > threshold).astype(np.uint8) * 255
+
+    def _morphology(self, binary: np.ndarray) -> np.ndarray:
+        mask = binary > 0
+        struct = np.ones((3, 3), dtype=bool)
+        closed = binary_closing(mask, structure=struct, iterations=2)
+        opened = binary_opening(closed, structure=struct, iterations=1)
+        return opened.astype(np.uint8) * 255
+
+    def _label_components(self, mask: np.ndarray):
+        labeled, count = label(mask)
+        slices = find_objects(labeled)
+        return labeled, count, slices
+
+    def _draw_boxes(self, base_image: np.ndarray, boxes: List[Tuple[int, int, int, int]]) -> np.ndarray:
+        pil_img = Image.fromarray(base_image.copy())
+        draw = ImageDraw.Draw(pil_img)
+        for (x0, y0, x1, y1) in boxes:
+            draw.rectangle([x0, y0, x1, y1], outline=(0, 255, 0), width=2)
+        return np.array(pil_img, dtype=np.uint8)
+
+    # Logic dành cho shape
+    def filter_contour(self, bbox: Tuple[int, int, int, int],
+                       min_w: int = 20, min_h: int = 20, min_area: int = 400) -> bool:
+        x0, y0, x1, y1 = bbox
+        w, h = x1 - x0, y1 - y0
+        if w < min_w or h < min_h:
             return False
-        
+        if w * h < min_area:
+            return False
         return True
-    
-    def preprocess_shape_with_morph(self, img):
-        """
-        Áp dụng morphological operations để làm sạch shapes
-        """
-        # Morphological closing: đóng các lỗ nhỏ
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        closed = cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernel, iterations=2)
-        
-        # Morphological opening: loại bỏ nhiễu nhỏ
-        opened = cv2.morphologyEx(closed, cv2.MORPH_OPEN, kernel, iterations=1)
-        
-        return opened
-    
-    def segment_and_preprocess(self, image_path, output_path=None, save_images=True, apply_morph=True, return_steps=False):
-        """
-        Segment và preprocess ảnh chứa nhiều shapes
-        """
-        # 1. Load ảnh
-        img = self.load_image(image_path)
-        
-        # Load ảnh gốc màu để hiển thị contours
-        img_color = cv2.imread(image_path)
-        if img_color is None:
-            img_color = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-        
-        # 2. Invert màu (shape đen nền trắng -> shape trắng nền đen)
-        img_inv = self.invert_image(img)
-        
-        # 3. Gaussian Blur để giảm nhiễu
-        blurred = cv2.GaussianBlur(img_inv, (5, 5), 0)
-        
-        # 4. Binarize
-        binary = self.binarize(blurred, method='otsu')
-        
-        # 5. Apply morphological operations (nếu cần)
-        if apply_morph:
-            morph = self.preprocess_shape_with_morph(binary)
-        else:
-            morph = binary
-        
-        # 6. Tìm contours
-        contours = self.find_contours(morph)
-        
-        # Tạo thư mục output nếu cần
+
+    def preprocess_shape_with_morph(self, binary: np.ndarray, apply_morph: bool) -> np.ndarray:
+        return self._morphology(binary) if apply_morph else binary
+
+    def segment_and_preprocess(
+        self,
+        image_path: str,
+        output_path: str | None = None,
+        save_images: bool = True,
+        apply_morph: bool = True,
+        return_steps: bool = False,
+    ):
+        rgb_img, gray_img = self._load_images(image_path)
+        inverted = 255 - gray_img
+        blurred = self._gaussian_blur(inverted, radius=1.0)
+        binary = self._otsu_threshold(blurred)
+        morph = self.preprocess_shape_with_morph(binary, apply_morph)
+        mask = morph > 0
+
+        labeled, _, slices = self._label_components(mask)
+        boxes: List[Tuple[int, int, int, int]] = []
+
+        for slc in slices:
+            if slc is None:
+                continue
+            y0, y1 = slc[0].start, slc[0].stop
+            x0, x1 = slc[1].start, slc[1].stop
+            bbox = (x0, y0, x1, y1)
+            if self.filter_contour(bbox):
+                boxes.append(bbox)
+
+        drawn = self._draw_boxes(rgb_img, boxes)
+
         if save_images and output_path:
             os.makedirs(output_path, exist_ok=True)
-        
+
         shapes = []
-        shape_count = 0
-        
-        # Lưu preprocessing steps nếu cần
-        preprocessing_steps = {}
-        if return_steps:
-            # Bước 1: Ảnh gốc màu
-            preprocessing_steps['1_original'] = img_color
-            
-            # Bước 2: Grayscale
-            preprocessing_steps['2_grayscale'] = img
-            
-            # Bước 3: Blurred
-            preprocessing_steps['3_blurred'] = blurred
-            
-            # Bước 4: Threshold (Binary)
-            preprocessing_steps['4_threshold'] = binary
-            
-            # Bước 5: Morphology
-            preprocessing_steps['5_morphology'] = morph
-        
-        # 7. Xử lý từng contour
-        filtered_contours = []
-        cropped_images = []
-        
-        # Tạo ảnh để vẽ bounding boxes
-        img_with_boxes = img_color.copy()
-        
-        for i, cnt in enumerate(contours):
-            x, y, w, h = cv2.boundingRect(cnt)
-            
-            # Kiểm tra và vẽ bounding box
-            is_valid = self.filter_contour(cnt)
-            
-            if is_valid:
-                # Vẽ khung xanh cho contour hợp lệ
-                cv2.rectangle(img_with_boxes, (x, y), (x+w, y+h), (0, 255, 0), 2)
-                filtered_contours.append(cnt)
-                
-                # Crop shape từ ảnh đã morphology
-                shape = morph[y:y+h, x:x+w]
-            cropped_images.append(shape)
-            
-            # Preprocess shape
-            shape_processed = self.preprocess_single(shape)
-            shapes.append(shape_processed)
-            
-            # Lưu preprocessing steps cho từng shape
-            if return_steps:
-                preprocessing_steps[f'7_shape_{shape_count}'] = (shape_processed * 255).astype('uint8')
-            
-            # Lưu ảnh ra file (nếu cần)
+        for idx, (x0, y0, x1, y1) in enumerate(boxes):
+            roi = morph[y0:y1, x0:x1]
+            if roi.size == 0:
+                continue
+
+            processed = self.preprocess_single(roi)
+            shapes.append(processed)
+
             if save_images and output_path:
-                save_path = os.path.join(output_path, f'shape_{shape_count}.png')
-                # Chuyển về uint8 để lưu (nhân 255)
-                shape_to_save = (shape_processed * 255).astype('uint8')
-                cv2.imwrite(save_path, shape_to_save)
-            
-            shape_count += 1
-        
-        # Thêm bước 6: Bounding boxes trên ảnh màu gốc
-        if return_steps:
-            preprocessing_steps['6_contours'] = img_with_boxes
-        
-        if return_steps:
-            return preprocessing_steps, shapes
-        return shapes
+                out_path = os.path.join(output_path, f"shape_{idx}.png")
+                Image.fromarray((processed * 255).astype(np.uint8)).save(out_path)
 
+        if not return_steps:
+            return shapes
 
-# Ví dụ sử dụng (có thể comment lại khi không cần)
-if __name__ == "__main__":
-    # Khởi tạo preprocessor
-    preprocessor = ShapePreprocessor(target_size=(64, 64), inner_size=56)
-    
-    # Xử lý ảnh
-    shapes = preprocessor.segment_and_preprocess(
-        image_path='path/to/shapes_image.png',
-        output_path='output/shapes',
-        save_images=True,
-        apply_morph=True
-    )
+        steps: Dict[str, np.ndarray] = {
+            "1_original": rgb_img,
+            "2_grayscale": gray_img,
+            "3_blurred": blurred,
+            "4_threshold": binary,
+            "5_morphology": morph,
+            "6_contours": drawn,
+        }
+
+        for idx, processed in enumerate(shapes):
+            steps[f"7_shape_{idx}"] = (processed * 255).astype(np.uint8)
+
+        return steps, shapes

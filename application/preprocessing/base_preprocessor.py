@@ -25,9 +25,7 @@ class BasePreprocessor:
         return img
     
     def invert_image(self, img):
-
         # Đảo màu ảnh: đen->trắng, trắng->đen
-
         return 255 - img
     
     def binarize(self, img, method='otsu'):
@@ -109,7 +107,6 @@ class BasePreprocessor:
     
     def preprocess_single(self, character_img):
         # Pipeline preprocessing cho 1 ký tự
-
         # 1. Loại bỏ viền thừa
         character_img = remove_border(character_img)
         
@@ -124,11 +121,8 @@ class BasePreprocessor:
         
         # 5. Normalize về [0, 1]
         character_img = self.normalize(character_img)
-        
         return character_img
     
     def segment_and_preprocess(self, image_path, output_path=None):
-
         # Segment và preprocess ảnh chứa nhiều ký tự
-
         raise NotImplementedError("Phương thức này cần được implement bởi class con")

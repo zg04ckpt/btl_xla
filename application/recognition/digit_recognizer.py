@@ -11,10 +11,10 @@ class DigitRecognizer:
         self.model_loaded = False
         
         if not os.path.exists(model_path):
-            print(f"⚠ Model not found: {model_path}")
+            print(f"Model not found: {model_path}")
             return
         
-        print(f"✓ Model ready ({os.path.getsize(model_path):,} bytes)")
+        print(f"Model ready ({os.path.getsize(model_path):,} bytes)")
     
 
     
@@ -23,7 +23,7 @@ class DigitRecognizer:
         try:
             return self._recognize_with_subprocess(digit_images)
         except Exception as e:
-            print(f"⚠ Prediction failed: {e}")
+            print(f"Prediction failed: {e}")
             # Fallback: demo mode
             return [(i % 10, 0.95) for i in range(len(digit_images))]
     
