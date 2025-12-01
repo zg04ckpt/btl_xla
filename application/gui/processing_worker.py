@@ -13,11 +13,11 @@ class ProcessingWorker(QThread):
     error = pyqtSignal(str)  # Khi có lỗi
     progress = pyqtSignal(str)  # Cập nhật tiến trình
     
-    def __init__(self, image_path, recognition_mode, processors, recognizers):
+    def __init__(self, image_path, recognition_mode, preprocessors, recognizers):
         super().__init__()
         self.image_path = image_path
         self.recognition_mode = recognition_mode
-        self.processors = processors  # dict: {'letter': LetterProcessor, 'shape': ImageProcessor}
+        self.preprocessors = preprocessors  # dict: {'digit': DigitPreprocessor, 'letter': LetterPreprocessor, 'shape': ShapePreprocessor}
         self.recognizers = recognizers  # dict: {'digit': DigitRecognizer, 'letter': LetterRecognizer, 'shape': ShapeRecognizer}
         
     def run(self):
@@ -26,12 +26,19 @@ class ProcessingWorker(QThread):
             # Bước 1: Tiền xử lý ảnh
             self.progress.emit("Đang tiền xử lý ảnh...")
             
+            # Sử dụng preprocessor phù hợp với mode
             if self.recognition_mode == 'letters':
-                preprocessing_steps, object_images = self.processors['letter'].process_image(self.image_path, 'letters')
+                preprocessing_steps, object_images = self.preprocessors['letter'].segment_and_preprocess(
+                    self.image_path, output_path=None, save_images=False, return_steps=True
+                )
             elif self.recognition_mode == 'shapes':
-                preprocessing_steps, object_images = self.processors['shape'].process_image(self.image_path, 'shapes')
+                preprocessing_steps, object_images = self.preprocessors['shape'].segment_and_preprocess(
+                    self.image_path, output_path=None, save_images=False, return_steps=True
+                )
             else:  # digits
-                preprocessing_steps, object_images = self.processors['letter'].process_image(self.image_path, 'digits')
+                preprocessing_steps, object_images = self.preprocessors['digit'].segment_and_preprocess(
+                    self.image_path, output_path=None, save_images=False, return_steps=True
+                )
             
             if not object_images:
                 self.error.emit("Không phát hiện đối tượng nào!")

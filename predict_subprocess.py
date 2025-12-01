@@ -27,7 +27,8 @@ for digit_img in digit_images:
     if digit_img.shape != (28, 28):
         digit_img = cv2.resize(digit_img, (28, 28))
     
-    digit_img = digit_img.astype("float32") / 255.0
+    # Preprocessor đã normalize rồi, không cần chia 255 nữa
+    digit_img = digit_img.astype("float32")
     digit_img = digit_img.reshape(1, 28, 28, 1)
     
     prediction = model.predict(digit_img, verbose=0)

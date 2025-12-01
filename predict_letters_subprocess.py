@@ -42,8 +42,8 @@ def predict_letters(images_file, model_path=None):
     # Chuẩn bị dữ liệu
     X = np.array(images, dtype=np.float32)
     
-    # Normalize về [0, 1]
-    X = X / 255.0
+    # Preprocessor đã normalize rồi, không cần chia 255 nữa
+    # X = X / 255.0  # <<<< REMOVED
     
     # Reshape thành (N, 28, 28, 1) cho CNN
     X = X.reshape(-1, 28, 28, 1)
